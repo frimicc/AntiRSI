@@ -15,6 +15,31 @@
 #include <math.h>
 #include <ApplicationServices/ApplicationServices.h>
 
+// Value transformer that allows NSColor to be securely unarchived from NSData in user defaults.
+@interface NSColorValueTransformer : NSValueTransformer
+@end
+
+@implementation NSColorValueTransformer
+
++ (Class)transformedValueClass { return [NSColor class]; }
++ (BOOL)allowsReverseTransformation { return YES; }
+
+- (id)transformedValue:(id)value {
+    if (![value isKindOfClass:[NSData class]]) return nil;
+    NSError *error = nil;
+    NSColor *color = [NSKeyedUnarchiver unarchivedObjectOfClass:[NSColor class] fromData:value error:&error];
+    return color;
+}
+
+- (id)reverseTransformedValue:(id)value {
+    if (![value isKindOfClass:[NSColor class]]) return nil;
+    NSError *error = nil;
+    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:value requiringSecureCoding:NO error:&error];
+    return data;
+}
+
+@end
+
 // entry functions from antirsi-core
 
 static void handle_break_end(void * data) {
@@ -94,7 +119,7 @@ static void handle_status_update(void * data) {
     background=[c retain];
 
     // make new darkbackground color
-    float r,g,b,a;
+    CGFloat r,g,b,a;
     [background getRed:&r green:&g blue:&b alpha:&a];
     [darkbackground autorelease];
     darkbackground=[[NSColor colorWithCalibratedRed:r*0.35 green:g*0.35 blue:b*0.35 alpha:a+0.2] retain];
@@ -120,6 +145,10 @@ static void handle_status_update(void * data) {
 
 - (void)awakeFromNib
 {
+    // Register the color value transformer before any bindings are set up
+    [NSValueTransformer setValueTransformer:[[NSColorValueTransformer alloc] init]
+                                    forName:@"NSColorValueTransformer"];
+
     core = antirsi_init(self);
     // want transparancy
     [NSColor setIgnoresAlpha:NO];
@@ -151,7 +180,7 @@ static void handle_status_update(void * data) {
 
     // setup main window that will show either micropause or workbreak
     main_window = [[NSWindow alloc] initWithContentRect:[view frame]
-                                              styleMask:NSBorderlessWindowMask
+                                              styleMask:NSWindowStyleMaskBorderless
                                                 backing:NSBackingStoreBuffered defer:YES];
     [main_window setBackgroundColor:[NSColor clearColor]];
     [main_window setLevel:NSScreenSaverWindowLevel];
@@ -175,9 +204,9 @@ static void handle_status_update(void * data) {
     [initial setObject:@"Smooth" forKey:@"sample_interval"];
     [initial setObject:[NSNumber numberWithBool:YES] forKey:@"draw_dock_image"];
     [initial setObject:[NSNumber numberWithBool:NO] forKey:@"lock_focus"];
-    [initial setObject:[NSArchiver archivedDataWithRootObject:elapsed] forKey:@"elapsed"];
-    [initial setObject:[NSArchiver archivedDataWithRootObject:taking] forKey:@"taking"];
-    [initial setObject:[NSArchiver archivedDataWithRootObject:background] forKey:@"background"];
+    [initial setObject:[NSKeyedArchiver archivedDataWithRootObject:elapsed requiringSecureCoding:NO error:nil] forKey:@"elapsed"];
+    [initial setObject:[NSKeyedArchiver archivedDataWithRootObject:taking requiringSecureCoding:NO error:nil] forKey:@"taking"];
+    [initial setObject:[NSKeyedArchiver archivedDataWithRootObject:background requiringSecureCoding:NO error:nil] forKey:@"background"];
     [[NSUserDefaultsController sharedUserDefaultsController] setInitialValues:initial];
 
     // bind to defauls controller
@@ -189,7 +218,7 @@ static void handle_status_update(void * data) {
     [self bind:@"sample_interval" toObject:dc withKeyPath:@"values.sample_interval" options:nil];
     [self bind:@"draw_dock_image" toObject:dc withKeyPath:@"values.draw_dock_image" options:nil];
     [self bind:@"lock_focus" toObject:dc withKeyPath:@"values.lock_focus" options:nil];
-    NSDictionary* unarchive = [NSDictionary dictionaryWithObject:NSUnarchiveFromDataTransformerName forKey:@"NSValueTransformerName"];
+    NSDictionary* unarchive = [NSDictionary dictionaryWithObject:@"NSColorValueTransformer" forKey:@"NSValueTransformerName"];
     [self bind:@"elapsed" toObject:dc withKeyPath:@"values.elapsed" options:unarchive];
     [self bind:@"taking" toObject:dc withKeyPath:@"values.taking" options:unarchive];
     [self bind:@"background" toObject:dc withKeyPath:@"values.background" options:unarchive];
@@ -369,29 +398,38 @@ static void handle_status_update(void * data) {
 // check for update
 - (IBAction)checkForUpdate:(id)sender
 {
-    NSString *latest_version = [NSString stringWithContentsOfURL: [NSURL URLWithString:sLatestVersionURL]];
-    if (latest_version == Nil) latest_version = @"";
-    
+    NSString *latest_version = [NSString stringWithContentsOfURL:[NSURL URLWithString:sLatestVersionURL]
+                                                         encoding:NSUTF8StringEncoding
+                                                            error:nil];
+    if (latest_version == nil) latest_version = @"";
+
     latest_version = [latest_version stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 
     if ([latest_version length] == 0) {
-        NSRunInformationalAlertPanel(
-            @"Unable to Determine",
-            @"Unable to determine the latest AntiRSI version number.",
-            @"Ok", nil, nil);
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"Unable to Determine"];
+        [alert setInformativeText:@"Unable to determine the latest AntiRSI version number."];
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        [alert release];
     } else if ([latest_version compare:sVersion] == NSOrderedDescending) {
-        int r = NSRunInformationalAlertPanel(
-            @"New Version",
-            [NSString stringWithFormat:@"A new version (%@) of AntiRSI is available; would you like to go to the website now?", latest_version],
-            @"Goto Website", @"Cancel", nil);
-        if (r == NSOKButton) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"New Version"];
+        [alert setInformativeText:[NSString stringWithFormat:@"A new version (%@) of AntiRSI is available; would you like to go to the website now?", latest_version]];
+        [alert addButtonWithTitle:@"Go to Website"];
+        [alert addButtonWithTitle:@"Cancel"];
+        NSModalResponse r = [alert runModal];
+        [alert release];
+        if (r == NSAlertFirstButtonReturn) {
             [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:sURL]];
         }
     } else {
-        NSRunInformationalAlertPanel(
-            @"No Update Available",
-            @"This is the latest version of AntiRSI.",
-            @"OK", nil, nil);
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"No Update Available"];
+        [alert setInformativeText:@"This is the latest version of AntiRSI."];
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        [alert release];
     }
 }
 
