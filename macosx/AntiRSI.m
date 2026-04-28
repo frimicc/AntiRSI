@@ -247,7 +247,11 @@ static void handle_status_update(void * data) {
                                              keyEquivalent:@""] autorelease]];
     [statusMenu addItem:[NSMenuItem separatorItem]];
     [statusMenu addItem:[[[NSMenuItem alloc] initWithTitle:@"Preferences..."
-                                                    action:@selector(orderFrontStandardAboutPanel:)
+                                                    action:@selector(showPreferences:)
+                                             keyEquivalent:@""] autorelease]];
+    [statusMenu addItem:[NSMenuItem separatorItem]];
+    [statusMenu addItem:[[[NSMenuItem alloc] initWithTitle:@"Quit AntiRSI"
+                                                    action:@selector(terminate:)
                                              keyEquivalent:@""] autorelease]];
     [statusItem setMenu:statusMenu];
     statusItemLastDraw = 0;
@@ -486,6 +490,19 @@ static void handle_status_update(void * data) {
             minutes / 60, minutes % 60]];
     } else {
         [next_break setStringValue:[NSString stringWithFormat:@"next break in %d minutes", minutes]];
+    }
+}
+
+// show the preferences window (used by the status item menu)
+- (IBAction)showPreferences:(id)sender
+{
+    // Find the Preferences window by title among all app windows
+    for (NSWindow *w in [NSApp windows]) {
+        if ([[w title] isEqualToString:@"Preferences"]) {
+            [NSApp activateIgnoringOtherApps:YES];
+            [w makeKeyAndOrderFront:self];
+            return;
+        }
     }
 }
 
