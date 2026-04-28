@@ -235,6 +235,23 @@ static void handle_status_update(void * data) {
 
     // TODO remove?
     [progress setMaxValue:1];
+
+    // create menu bar status item
+    statusItem = [[[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength] retain];
+    NSMenu *statusMenu = [[[NSMenu alloc] init] autorelease];
+    [statusMenu addItem:[[[NSMenuItem alloc] initWithTitle:@"Take Break Now"
+                                                    action:@selector(breakNow:)
+                                             keyEquivalent:@""] autorelease]];
+    [statusMenu addItem:[[[NSMenuItem alloc] initWithTitle:@"Postpone Break"
+                                                    action:@selector(postpone:)
+                                             keyEquivalent:@""] autorelease]];
+    [statusMenu addItem:[NSMenuItem separatorItem]];
+    [statusMenu addItem:[[[NSMenuItem alloc] initWithTitle:@"Preferences..."
+                                                    action:@selector(orderFrontStandardAboutPanel:)
+                                             keyEquivalent:@""] autorelease]];
+    [statusItem setMenu:statusMenu];
+    statusItemLastDraw = 0;
+    [self drawStatusItemImage];
 }
 
 // tick every second and update status
@@ -261,6 +278,12 @@ static void handle_status_update(void * data) {
 
 // draw the dock icon
 - (void)drawDockImage {
+    // throttle status item redraws to at most once every 10 seconds
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - statusItemLastDraw >= 10.0) {
+        [self drawStatusItemImage];
+    }
+
     if (!draw_dock_image) return;
 
     [dock_image lockFocus];
@@ -330,8 +353,83 @@ static void handle_status_update(void * data) {
     if (draw_dock_image_q) [NSApp setApplicationIconImage:dock_image];
 }
 
+// draw the menu bar status item icon with two concentric progress rings
+- (void)drawStatusItemImage {
+    statusItemLastDraw = CFAbsoluteTimeGetCurrent();
+
+    // draw at 2x into an 18pt square (36px backing store)
+    CGFloat size = 18.0;
+    NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
+    [image setTemplate:YES]; // adapts to light/dark menu bar automatically
+
+    [image lockFocus];
+
+    CGFloat cx = size / 2.0;
+    CGFloat cy = size / 2.0;
+
+    // track fractions, clamped to [0, 1]
+    double workFraction = (core->work_interval > 0)
+        ? MIN(1.0, core->work_t / core->work_interval) : 0.0;
+    double miniFraction = (core->mini_interval > 0)
+        ? MIN(1.0, core->mini_t / core->mini_interval) : 0.0;
+
+    CGFloat outerRadius = 7.5;
+    CGFloat innerRadius = 3.5;
+    CGFloat trackWidth  = 2.0;
+
+    // draw empty track rings (dim, ~30% alpha)
+    [[NSColor colorWithWhite:0.0 alpha:0.25] set];
+
+    NSBezierPath *outerTrack = [NSBezierPath bezierPath];
+    [outerTrack appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy)
+                                          radius:outerRadius
+                                      startAngle:0 endAngle:360 clockwise:NO];
+    [outerTrack setLineWidth:trackWidth];
+    [outerTrack stroke];
+
+    NSBezierPath *innerTrack = [NSBezierPath bezierPath];
+    [innerTrack appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy)
+                                          radius:innerRadius
+                                      startAngle:0 endAngle:360 clockwise:NO];
+    [innerTrack setLineWidth:trackWidth];
+    [innerTrack stroke];
+
+    // draw filled arcs (fully opaque, clockwise from 12 o'clock = 90°)
+    [[NSColor colorWithWhite:0.0 alpha:0.85] set];
+
+    if (workFraction > 0.001) {
+        double endAngle = 90.0 - workFraction * 360.0;
+        NSBezierPath *outerArc = [NSBezierPath bezierPath];
+        [outerArc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy)
+                                            radius:outerRadius
+                                        startAngle:90.0
+                                          endAngle:endAngle
+                                         clockwise:YES];
+        [outerArc setLineWidth:trackWidth];
+        [outerArc stroke];
+    }
+
+    if (miniFraction > 0.001) {
+        double endAngle = 90.0 - miniFraction * 360.0;
+        NSBezierPath *innerArc = [NSBezierPath bezierPath];
+        [innerArc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy)
+                                            radius:innerRadius
+                                        startAngle:90.0
+                                          endAngle:endAngle
+                                         clockwise:YES];
+        [innerArc setLineWidth:trackWidth];
+        [innerArc stroke];
+    }
+
+    [image unlockFocus];
+
+    [statusItem.button setImage:image];
+    [image release];
+}
+
 // done with micro pause or work break
 - (void)endBreak {
+    [self drawStatusItemImage];
     [[main_window animator] setAlphaValue:0.0];
     // what is the consequence of hiding it, instead of ordering it out??
     //[main_window orderOut:NULL];
@@ -353,6 +451,7 @@ static void handle_status_update(void * data) {
 
 // display micro_pause window with appropriate widgets and progress bar
 - (void)doMicroPause {
+    [self drawStatusItemImage];
     [label setStringValue: sMicroPause];
     [progress setDoubleValue:ai_break_progress(core)];
     [postpone setHidden:YES];
@@ -363,6 +462,7 @@ static void handle_status_update(void * data) {
 
 // display work_break window with appropriate widgets and progress bar
 - (void)doWorkBreak {
+    [self drawStatusItemImage];
     [label setStringValue: sWorkBreak];
     [progress setDoubleValue:ai_break_progress(core)];
     [postpone setHidden:NO];
@@ -470,6 +570,11 @@ static void handle_status_update(void * data) {
     [mtimer autorelease];
     mtimer = nil;
     [dock_image release];
+
+    // remove status item
+    [[NSStatusBar systemStatusBar] removeStatusItem:statusItem];
+    [statusItem release];
+    statusItem = nil;
 
     // and make sure to show original dock image
     [NSApp setApplicationIconImage: original_dock_image];

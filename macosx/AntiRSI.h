@@ -57,6 +57,10 @@
     NSString *sVersion;
 
     ai_core * core;
+
+    // menu bar status item
+    NSStatusItem *statusItem;
+    CFAbsoluteTime statusItemLastDraw;
 }
 
 //bindings
@@ -84,6 +88,9 @@
 
 // draw the dock icon
 - (void)drawDockImage;
+
+// draw the menu bar status item icon
+- (void)drawStatusItemImage;
 
 // run the micro pause window
 - (void)doMicroPause;
